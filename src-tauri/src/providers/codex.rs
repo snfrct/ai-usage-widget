@@ -71,13 +71,16 @@ async fn fetch_live(cred: &Credential) -> Result<UsageResponse, String> {
     }
 
     let resp = req.send().await.map_err(|e| e.to_string())?;
-    if resp.status().as_u16() == 401 {
+    let status = resp.status();
+    if status.as_u16() == 401 {
         return Err("unauthorized".into());
     }
-    if !resp.status().is_success() {
-        return Err(format!("http {}", resp.status()));
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    crate::debug_log!("[codex] raw usage response: {body}");
+    if !status.is_success() {
+        return Err(format!("http {status}"));
     }
-    resp.json::<UsageResponse>().await.map_err(|e| e.to_string())
+    serde_json::from_str::<UsageResponse>(&body).map_err(|e| e.to_string())
 }
 
 fn reset_label(dt: DateTime<Utc>) -> String {
@@ -114,8 +117,14 @@ pub fn codex_login() -> Result<(), String> {
 
 pub async fn refresh() -> ToolUsage {
     let Some(cred) = read_credential() else {
+        crate::debug_log!("[codex] no credential found (~/.codex/auth.json missing or unparsable)");
         return ToolUsage::not_logged_in("codex", "Not logged in — run `codex login`");
     };
+    crate::debug_log!(
+        "[codex] credential found: access_token_len={} has_account_id={}",
+        cred.access_token.len(),
+        cred.account_id.is_some()
+    );
 
     match fetch_live(&cred).await {
         Ok(resp) => {
@@ -123,6 +132,11 @@ pub async fn refresh() -> ToolUsage {
                 primary_window: None,
                 secondary_window: None,
             });
+            crate::debug_log!(
+                "[codex] mapped: five_hour={:?} weekly={:?}",
+                rate_limit.primary_window.as_ref().and_then(to_window),
+                rate_limit.secondary_window.as_ref().and_then(to_window)
+            );
             ToolUsage {
                 tool: "codex".into(),
                 status: ToolStatus::Ok,

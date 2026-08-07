@@ -1,3 +1,4 @@
+mod debug;
 mod models;
 mod providers;
 mod scheduler;

@@ -72,7 +72,7 @@ fn read_from_env() -> Option<OAuthCreds> {
     if token.is_empty() {
         return None;
     }
-    eprintln!("[claude] using CLAUDE_CODE_OAUTH_TOKEN from environment");
+    crate::debug_log!("[claude] using CLAUDE_CODE_OAUTH_TOKEN from environment");
     Some(OAuthCreds {
         access_token: token.to_string(),
         refresh_token: None,
@@ -126,7 +126,7 @@ async fn refresh_access_token(refresh_token: &str) -> Result<String, String> {
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        eprintln!("[claude] token refresh endpoint returned http {status}: {body}");
+        crate::debug_log!("[claude] token refresh endpoint returned http {status}: {body}");
         return Err(format!("http {status}"));
     }
     resp.json::<TokenRefreshResponse>()
@@ -175,7 +175,7 @@ async fn fetch_live(token: &str) -> Result<UsageResponse, String> {
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        eprintln!("[claude] usage endpoint returned http {status}: {body}");
+        crate::debug_log!("[claude] usage endpoint returned http {status}: {body}");
         if status.as_u16() == 401 {
             return Err("unauthorized".into());
         }
@@ -241,7 +241,7 @@ fn usage_from_response(resp: UsageResponse) -> ToolUsage {
 
 pub async fn refresh() -> ToolUsage {
     let Some(creds) = read_credential() else {
-        eprintln!("[claude] no credential found (keychain and file both empty/unparsable)");
+        crate::debug_log!("[claude] no credential found (keychain and file both empty/unparsable)");
         return match local_estimate::claude_estimate() {
             Some(mut usage) => {
                 usage.message = Some("Not logged in — showing a rough local estimate. Run `claude login` for live numbers.".into());
@@ -250,7 +250,7 @@ pub async fn refresh() -> ToolUsage {
             None => ToolUsage::not_logged_in("claude", "Not logged in — run `claude login`"),
         };
     };
-    eprintln!(
+    crate::debug_log!(
         "[claude] credential found: access_token_len={} has_refresh_token={} expires_at={:?} is_expired={}",
         creds.access_token.len(),
         creds.refresh_token.is_some(),
@@ -272,21 +272,21 @@ pub async fn refresh() -> ToolUsage {
         if let Some(refresh_token) = &creds.refresh_token {
             match refresh_access_token(refresh_token).await {
                 Ok(fresh_token) => {
-                    eprintln!("[claude] proactive refresh succeeded");
+                    crate::debug_log!("[claude] proactive refresh succeeded");
                     access_token = fresh_token;
                 }
-                Err(e) => eprintln!("[claude] proactive refresh failed: {e}"),
+                Err(e) => crate::debug_log!("[claude] proactive refresh failed: {e}"),
             }
         }
     }
 
     match fetch_live(&access_token).await {
         Ok(resp) => {
-            eprintln!("[claude] fetch_live succeeded");
+            crate::debug_log!("[claude] fetch_live succeeded");
             usage_from_response(resp)
         }
         Err(e) if e == "unauthorized" => {
-            eprintln!("[claude] fetch_live returned 401; attempting reactive refresh-and-retry");
+            crate::debug_log!("[claude] fetch_live returned 401; attempting reactive refresh-and-retry");
             // Reactive fallback: the token looked valid locally but the
             // server disagreed (e.g. revoked early). Try one refresh-and-retry
             // before giving up.
@@ -294,20 +294,20 @@ pub async fn refresh() -> ToolUsage {
                 match refresh_access_token(refresh_token).await {
                     Ok(fresh_token) => match fetch_live(&fresh_token).await {
                         Ok(resp) => {
-                            eprintln!("[claude] reactive refresh-and-retry succeeded");
+                            crate::debug_log!("[claude] reactive refresh-and-retry succeeded");
                             return usage_from_response(resp);
                         }
-                        Err(e) => eprintln!("[claude] retry after reactive refresh still failed: {e}"),
+                        Err(e) => crate::debug_log!("[claude] retry after reactive refresh still failed: {e}"),
                     },
-                    Err(e) => eprintln!("[claude] reactive refresh failed: {e}"),
+                    Err(e) => crate::debug_log!("[claude] reactive refresh failed: {e}"),
                 }
             } else {
-                eprintln!("[claude] no refresh_token available for reactive refresh");
+                crate::debug_log!("[claude] no refresh_token available for reactive refresh");
             }
             ToolUsage::auth_expired("claude", "Claude session expired — run `claude login`")
         }
         Err(e) => {
-            eprintln!("[claude] fetch_live failed (non-401): {e}");
+            crate::debug_log!("[claude] fetch_live failed (non-401): {e}");
             ToolUsage::error("claude", format!("Couldn't reach Anthropic ({e})"))
         }
     }
