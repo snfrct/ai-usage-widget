@@ -1,8 +1,12 @@
 # AI Usage Widget
 
-A small cross-platform tray/menu-bar widget (built with [Tauri v2](https://v2.tauri.app)) that shows, at a glance, how much of your usage quota you've burned on **Claude Code**, **Codex**, and **Cursor** — so you can tell which one still has headroom right now.
+A small desktop widget (built with [Tauri v2](https://v2.tauri.app)) that shows, at a glance, how much of your usage quota you've burned on **Claude Code**, **Codex**, and **Cursor** — so you can tell which one still has headroom right now.
 
-Click the tray icon to open the popover. It polls every 5 minutes in the background; opening the popover also triggers an immediate refresh.
+![AI Usage Widget — sample view](docs/screenshot.svg)
+
+*(Illustrative sample data, not a live account.)*
+
+It's a borderless, always-visible floating window — no dock icon, no menu-bar icon — that you drag to wherever you want on screen (drag from the thin strip along the top edge) and quit from the small `×` in the corner. It polls every 5 minutes in the background and refreshes once more on launch.
 
 ## How each integration works, and why
 
@@ -39,7 +43,7 @@ Cursor has no short rolling window like Claude/Codex — just a monthly reset, s
 ## Storage & privacy
 
 - This app never writes any credential or token to disk itself. Each provider re-reads its source of truth (keychain / credential file / Cursor's own local database) on every refresh instead of caching a token locally.
-- The only thing persisted to disk is the last-known-good *usage snapshot* (percentages and reset labels, no tokens) at `<app data dir>/usage-cache.json`, so the popover has something to show instantly on launch before the first live fetch completes.
+- The only thing persisted to disk is the last-known-good *usage snapshot* (percentages and reset labels, no tokens) at `<app data dir>/usage-cache.json`, so the widget has something to show instantly on launch before the first live fetch completes.
 - Polling runs every 5 minutes — this is a glance tool, not a real-time dashboard.
 
 ## Development
@@ -55,4 +59,8 @@ Requires the Rust toolchain (`rustup`) in addition to Node.
 
 - Burn-rate/pace indicators — plain % + reset date only.
 - Custom OAuth app registrations with Anthropic/OpenAI/Cursor (none currently offer one for third parties).
-- Windows/Linux tray polish beyond what's implemented — flagged for follow-up as encountered, not pre-solved.
+- Windows/Linux window-chrome polish beyond what's implemented — flagged for follow-up as encountered, not pre-solved.
+
+## License
+
+[MIT](LICENSE)
