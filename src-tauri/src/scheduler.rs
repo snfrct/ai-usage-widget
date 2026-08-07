@@ -7,8 +7,11 @@ use crate::providers::{claude, codex, cursor};
 use crate::store::Store;
 
 /// A glance tool, not a real-time dashboard — poll every few minutes rather
-/// than aggressively, per the brief.
-const POLL_INTERVAL_SECS: u64 = 5 * 60;
+/// than aggressively, per the brief. 30 minutes specifically because Claude's
+/// and Codex's usage endpoints are undocumented and rate-limited in ways
+/// that aren't publicly specified; a slower cadence means fewer chances to
+/// trip them in the first place.
+const POLL_INTERVAL_SECS: u64 = 30 * 60;
 
 pub async fn refresh_all(app: &AppHandle) -> AllUsage {
     let (claude_usage, codex_usage, cursor_usage) =

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use chrono::{DateTime, Local, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::models::{DataSource, ToolStatus, ToolUsage, UsageWindow};
 use crate::providers::local_estimate;
@@ -17,7 +17,7 @@ struct CredentialsFile {
     claude_ai_oauth: Option<OAuthCreds>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 struct OAuthCreds {
     #[serde(rename = "accessToken")]
     access_token: String,
@@ -80,17 +80,98 @@ fn read_from_env() -> Option<OAuthCreds> {
     })
 }
 
+/// OAuth refresh tokens are commonly rotating (single-use): each successful
+/// refresh invalidates the old one and issues a new one. Claude Code's CLI
+/// handles that by rewriting its own keychain entry — but this widget
+/// deliberately never writes to that entry (it isn't ours to own). Without
+/// somewhere to keep a rotated token, our *own* refreshes would strand
+/// themselves: the first refresh succeeds, the server rotates the refresh
+/// token, and every refresh after that fails with `invalid_grant` because
+/// Keychain still has the one we already used up. This is a distinct
+/// Keychain item scoped to this app — never Claude Code's own — used only
+/// to remember whichever refresh token we most recently obtained.
+const CACHE_KEYCHAIN_SERVICE: &str = "ai-usage-widget";
+const CACHE_KEYCHAIN_ACCOUNT: &str = "claude-oauth-cache";
+
+#[cfg(target_os = "macos")]
+fn read_cache() -> Option<OAuthCreds> {
+    let output = Command::new("security")
+        .args([
+            "find-generic-password",
+            "-s",
+            CACHE_KEYCHAIN_SERVICE,
+            "-a",
+            CACHE_KEYCHAIN_ACCOUNT,
+            "-w",
+        ])
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8(output.stdout).ok()?;
+    serde_json::from_str(raw.trim()).ok()
+}
+
+#[cfg(target_os = "macos")]
+fn write_cache(creds: &OAuthCreds) {
+    let Ok(json) = serde_json::to_string(creds) else {
+        return;
+    };
+    let status = Command::new("security")
+        .args([
+            "add-generic-password",
+            "-U",
+            "-s",
+            CACHE_KEYCHAIN_SERVICE,
+            "-a",
+            CACHE_KEYCHAIN_ACCOUNT,
+            "-w",
+            &json,
+        ])
+        .stderr(Stdio::null())
+        .status();
+    crate::debug_log!("[claude] wrote refreshed token to our own keychain cache: {status:?}");
+}
+
+#[cfg(not(target_os = "macos"))]
+fn read_cache() -> Option<OAuthCreds> {
+    None
+}
+
+#[cfg(not(target_os = "macos"))]
+fn write_cache(_creds: &OAuthCreds) {}
+
+/// Whichever credential expires later is the more recently issued one.
+fn newer(a: OAuthCreds, b: OAuthCreds) -> OAuthCreds {
+    match (a.expires_at, b.expires_at) {
+        (Some(ea), Some(eb)) if eb > ea => b,
+        (None, Some(_)) => b,
+        _ => a,
+    }
+}
+
 fn read_credential() -> Option<OAuthCreds> {
     if let Some(creds) = read_from_env() {
         return Some(creds);
     }
-    #[cfg(target_os = "macos")]
-    {
-        if let Some(creds) = read_from_keychain() {
-            return Some(creds);
+    let primary = {
+        #[cfg(target_os = "macos")]
+        {
+            read_from_keychain().or_else(read_from_file)
         }
+        #[cfg(not(target_os = "macos"))]
+        {
+            read_from_file()
+        }
+    };
+    match (primary, read_cache()) {
+        (Some(p), Some(c)) => Some(newer(p, c)),
+        (Some(p), None) => Some(p),
+        (None, Some(c)) => Some(c),
+        (None, None) => None,
     }
-    read_from_file()
 }
 
 /// Claude Code CLI's own OAuth client ID — a public identifier, not a
@@ -103,13 +184,16 @@ const TOKEN_REFRESH_ENDPOINT: &str = "https://platform.claude.com/v1/oauth/token
 #[derive(Debug, Deserialize)]
 struct TokenRefreshResponse {
     access_token: String,
+    refresh_token: Option<String>,
+    expires_in: i64,
 }
 
-/// Refreshes an expired access token using its refresh token. The result is
-/// used in-memory for this fetch only — never written back to Claude Code's
-/// own keychain entry or credentials file, since that store belongs to the
-/// CLI, not us.
-async fn refresh_access_token(refresh_token: &str) -> Result<String, String> {
+/// Refreshes an expired access token using its refresh token. Returns the
+/// full rotated credential (Anthropic may issue a new refresh token
+/// alongside the new access token) so the caller can persist it to our own
+/// cache — this is never written back to Claude Code's own keychain entry
+/// or credentials file, since that store belongs to the CLI, not us.
+async fn refresh_access_token(refresh_token: &str) -> Result<OAuthCreds, String> {
     let client = reqwest::Client::new();
     let params = [
         ("grant_type", "refresh_token"),
@@ -129,10 +213,18 @@ async fn refresh_access_token(refresh_token: &str) -> Result<String, String> {
         crate::debug_log!("[claude] token refresh endpoint returned http {status}: {body}");
         return Err(format!("http {status}"));
     }
-    resp.json::<TokenRefreshResponse>()
+    let parsed = resp
+        .json::<TokenRefreshResponse>()
         .await
-        .map(|r| r.access_token)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    let expires_at = Utc::now().timestamp_millis() as f64 + (parsed.expires_in as f64 * 1000.0);
+    Ok(OAuthCreds {
+        access_token: parsed.access_token,
+        // Some rotation schemes don't issue a new refresh token every time;
+        // if the server didn't send one, the one we just used is still good.
+        refresh_token: parsed.refresh_token.or_else(|| Some(refresh_token.to_string())),
+        expires_at: Some(expires_at),
+    })
 }
 
 /// True once the token is expired or within a short buffer of expiring.
@@ -179,9 +271,37 @@ async fn fetch_live(token: &str) -> Result<UsageResponse, String> {
         if status.as_u16() == 401 {
             return Err("unauthorized".into());
         }
+        if status.as_u16() == 429 {
+            return Err("rate_limited".into());
+        }
         return Err(format!("http {status}"));
     }
     resp.json::<UsageResponse>().await.map_err(|e| e.to_string())
+}
+
+/// This endpoint is undocumented and, empirically, its rate limit appears to
+/// be a sliding window rather than a fixed cooldown — polling it again while
+/// still blocked seems to extend the block rather than just failing
+/// harmlessly (observed: an overnight run at the normal 5-minute cadence
+/// never recovered). So a 429 here backs off far longer than the normal
+/// poll interval before trying again, instead of hammering it every cycle.
+static RATE_LIMIT_BACKOFF_UNTIL: std::sync::OnceLock<std::sync::Mutex<Option<DateTime<Utc>>>> =
+    std::sync::OnceLock::new();
+const RATE_LIMIT_BACKOFF: chrono::Duration = chrono::Duration::minutes(30);
+
+fn backoff_state() -> &'static std::sync::Mutex<Option<DateTime<Utc>>> {
+    RATE_LIMIT_BACKOFF_UNTIL.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+fn active_backoff() -> Option<DateTime<Utc>> {
+    let until = (*backoff_state().lock().unwrap())?;
+    (Utc::now() < until).then_some(until)
+}
+
+fn start_backoff() {
+    let until = Utc::now() + RATE_LIMIT_BACKOFF;
+    *backoff_state().lock().unwrap() = Some(until);
+    crate::debug_log!("[claude] rate limited (429) — backing off until {until}");
 }
 
 fn reset_label(dt: DateTime<Utc>) -> String {
@@ -258,6 +378,17 @@ pub async fn refresh() -> ToolUsage {
         is_expired(&creds)
     );
 
+    if let Some(until) = active_backoff() {
+        crate::debug_log!("[claude] skipping fetch, rate-limit backoff active until {until}");
+        return ToolUsage::error(
+            "claude",
+            format!(
+                "Rate limited by Anthropic — retrying after {}",
+                until.with_timezone(&Local).format("%-I:%M%p").to_string().to_lowercase()
+            ),
+        );
+    }
+
     // Access tokens are short-lived and Claude Code CLI normally refreshes
     // its own silently whenever it runs — but nothing prompts that refresh
     // if this widget is the only thing reading the credential. Refresh
@@ -271,9 +402,10 @@ pub async fn refresh() -> ToolUsage {
     if is_expired(&creds) {
         if let Some(refresh_token) = &creds.refresh_token {
             match refresh_access_token(refresh_token).await {
-                Ok(fresh_token) => {
+                Ok(fresh_creds) => {
                     crate::debug_log!("[claude] proactive refresh succeeded");
-                    access_token = fresh_token;
+                    access_token = fresh_creds.access_token.clone();
+                    write_cache(&fresh_creds);
                 }
                 Err(e) => crate::debug_log!("[claude] proactive refresh failed: {e}"),
             }
@@ -292,19 +424,26 @@ pub async fn refresh() -> ToolUsage {
             // before giving up.
             if let Some(refresh_token) = &creds.refresh_token {
                 match refresh_access_token(refresh_token).await {
-                    Ok(fresh_token) => match fetch_live(&fresh_token).await {
-                        Ok(resp) => {
-                            crate::debug_log!("[claude] reactive refresh-and-retry succeeded");
-                            return usage_from_response(resp);
+                    Ok(fresh_creds) => {
+                        write_cache(&fresh_creds);
+                        match fetch_live(&fresh_creds.access_token).await {
+                            Ok(resp) => {
+                                crate::debug_log!("[claude] reactive refresh-and-retry succeeded");
+                                return usage_from_response(resp);
+                            }
+                            Err(e) => crate::debug_log!("[claude] retry after reactive refresh still failed: {e}"),
                         }
-                        Err(e) => crate::debug_log!("[claude] retry after reactive refresh still failed: {e}"),
-                    },
+                    }
                     Err(e) => crate::debug_log!("[claude] reactive refresh failed: {e}"),
                 }
             } else {
                 crate::debug_log!("[claude] no refresh_token available for reactive refresh");
             }
             ToolUsage::auth_expired("claude", "Claude session expired — run `claude login`")
+        }
+        Err(e) if e == "rate_limited" => {
+            start_backoff();
+            ToolUsage::error("claude", "Rate limited by Anthropic — backing off")
         }
         Err(e) => {
             crate::debug_log!("[claude] fetch_live failed (non-401): {e}");
