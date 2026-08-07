@@ -46,6 +46,31 @@ fn read_credential() -> Option<Credential> {
 struct WindowSnapshot {
     used_percent: Option<f64>,
     reset_at: Option<i64>,
+    /// Free-tier Codex accounts get a single ~30-day (monthly) rate limit
+    /// window instead of the 5h+weekly pair paid plans get — confirmed via
+    /// a real `plan_type: "free"` response where `primary_window` had
+    /// `limit_window_seconds: 2592000` (30 days) and `secondary_window` was
+    /// null. Using this field to classify each window is what lets both
+    /// shapes map correctly instead of assuming `primary` is always 5h.
+    limit_window_seconds: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum WindowKind {
+    FiveHour,
+    Weekly,
+    Monthly,
+}
+
+fn classify_window(seconds: i64) -> WindowKind {
+    const ONE_DAY: i64 = 24 * 3600;
+    if seconds <= ONE_DAY {
+        WindowKind::FiveHour
+    } else if seconds <= 10 * ONE_DAY {
+        WindowKind::Weekly
+    } else {
+        WindowKind::Monthly
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -93,12 +118,22 @@ fn reset_label(dt: DateTime<Utc>) -> String {
     }
 }
 
-fn to_window(resp: &WindowSnapshot) -> Option<UsageWindow> {
+fn monthly_reset_label(dt: DateTime<Utc>) -> String {
+    dt.with_timezone(&Local).format("%b %-d").to_string()
+}
+
+fn to_window(resp: &WindowSnapshot, kind: WindowKind) -> Option<UsageWindow> {
     let used_pct = resp.used_percent?;
     let resets_at = resp.reset_at.and_then(|secs| Utc.timestamp_opt(secs, 0).single());
+    let resets_label = resets_at
+        .map(|dt| match kind {
+            WindowKind::Monthly => monthly_reset_label(dt),
+            WindowKind::FiveHour | WindowKind::Weekly => reset_label(dt),
+        })
+        .unwrap_or_default();
     Some(UsageWindow {
         used_pct: used_pct as f32,
-        resets_label: resets_at.map(reset_label).unwrap_or_default(),
+        resets_label,
         resets_at,
     })
 }
@@ -132,17 +167,42 @@ pub async fn refresh() -> ToolUsage {
                 primary_window: None,
                 secondary_window: None,
             });
+
+            // `primary_window` isn't always the 5h window — free-tier
+            // accounts get a single ~30-day window there instead, with
+            // `secondary_window` absent entirely. Classify by
+            // `limit_window_seconds` rather than assuming a fixed position;
+            // when that field is missing, fall back to the old positional
+            // assumption (primary=5h, secondary=weekly) for safety.
+            let mut five_hour = None;
+            let mut weekly = None;
+            let mut monthly = None;
+            for (window, default_kind) in [
+                (rate_limit.primary_window.as_ref(), WindowKind::FiveHour),
+                (rate_limit.secondary_window.as_ref(), WindowKind::Weekly),
+            ] {
+                let Some(window) = window else { continue };
+                let kind = window.limit_window_seconds.map(classify_window).unwrap_or(default_kind);
+                let mapped = to_window(window, kind);
+                match kind {
+                    WindowKind::FiveHour => five_hour = mapped,
+                    WindowKind::Weekly => weekly = mapped,
+                    WindowKind::Monthly => monthly = mapped,
+                }
+            }
             crate::debug_log!(
-                "[codex] mapped: five_hour={:?} weekly={:?}",
-                rate_limit.primary_window.as_ref().and_then(to_window),
-                rate_limit.secondary_window.as_ref().and_then(to_window)
+                "[codex] mapped: five_hour={:?} weekly={:?} monthly={:?}",
+                five_hour,
+                weekly,
+                monthly
             );
+
             ToolUsage {
                 tool: "codex".into(),
                 status: ToolStatus::Ok,
-                five_hour: rate_limit.primary_window.as_ref().and_then(to_window),
-                weekly: rate_limit.secondary_window.as_ref().and_then(to_window),
-                monthly: None,
+                five_hour,
+                weekly,
+                monthly,
                 note: None,
                 source: DataSource::Live,
                 fetched_at: Utc::now(),

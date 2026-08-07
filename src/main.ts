@@ -55,13 +55,6 @@ function statsLineDual(usage: ToolUsage): string {
   return `${left}<span class="sep">/</span>${right}`;
 }
 
-function statsLineSingle(usage: ToolUsage): string {
-  const m = usage.monthly;
-  if (!m) return "—";
-  const reset = m.resets_label ? `resets ${m.resets_label}` : "";
-  return `${pct(m.used_pct)}${reset ? ` · ${reset}` : ""}`;
-}
-
 function segmentTitle(windowLabel: string, w: UsageWindow | null | undefined): string {
   if (!w) return `${windowLabel}: no data`;
   const reset = w.resets_label ? `, resets ${w.resets_label}` : "";
@@ -78,30 +71,75 @@ function barDual(usage: ToolUsage | null): string {
     </div>`;
 }
 
-function barSingle(usage: ToolUsage | null): string {
-  const m = usage?.monthly ?? null;
+type WindowKey = "five_hour" | "weekly" | "monthly";
+
+function segmentClass(key: WindowKey): string {
+  return key === "five_hour" ? "five-hour" : key;
+}
+
+function segmentLabel(key: WindowKey): string {
+  if (key === "five_hour") return "5-hour window";
+  if (key === "weekly") return "Weekly window";
+  return "Monthly usage";
+}
+
+function statsLineSingleFor(usage: ToolUsage, key: WindowKey): string {
+  const w = usage[key];
+  if (!w) return "—";
+  const prefix = key === "monthly" ? "resets " : "";
+  return w.resets_label ? `${pct(w.used_pct)} · ${prefix}${w.resets_label}` : pct(w.used_pct);
+}
+
+function barSingleFor(usage: ToolUsage | null, key: WindowKey): string {
+  const w = usage?.[key] ?? null;
   return `
     <div class="bar single">
-      <div class="segment monthly" title="${segmentTitle("Monthly usage", m)}"><div class="fill" style="width:${m?.used_pct ?? 0}%"></div></div>
+      <div class="segment ${segmentClass(key)}" title="${segmentTitle(segmentLabel(key), w)}"><div class="fill" style="width:${w?.used_pct ?? 0}%"></div></div>
     </div>`;
+}
+
+type Layout = { mode: "dual" } | { mode: "single"; key: WindowKey };
+
+/// Codex in particular can return several shapes depending on plan and
+/// current backend rollout — free-tier accounts get a single ~30-day
+/// (monthly) window; some paid accounts have only a weekly window active
+/// with no 5-hour window at all (secondary_window: null); the "classic"
+/// paid shape has both. The layout follows whatever data actually came
+/// back — dual only when *both* five_hour and weekly are present, a single
+/// full-width bar for whichever one window exists otherwise — rather than
+/// assuming a fixed shape per tool. `config.dual` is only the fallback
+/// shape used before any data has arrived yet (or for error/logged-out
+/// states with no window data at all).
+function resolveLayout(config: ToolConfig, usage: ToolUsage | null): Layout {
+  if (usage) {
+    const present: WindowKey[] = [];
+    if (usage.five_hour) present.push("five_hour");
+    if (usage.weekly) present.push("weekly");
+    if (usage.monthly) present.push("monthly");
+
+    if (present.includes("five_hour") && present.includes("weekly")) return { mode: "dual" };
+    if (present.length === 1) return { mode: "single", key: present[0] };
+  }
+  return config.dual ? { mode: "dual" } : { mode: "single", key: "monthly" };
 }
 
 function renderRow(config: ToolConfig, usage: ToolUsage | null): string {
   const muted = !usage || usage.status !== "ok";
   const isError = usage?.status === "error" || usage?.status === "auth_expired" || usage?.status === "not_logged_in";
+  const layout = resolveLayout(config, usage);
 
   let statsHtml: string;
   if (!usage) {
     statsHtml = "loading…";
   } else if (usage.status === "ok") {
-    statsHtml = config.dual ? statsLineDual(usage) : statsLineSingle(usage);
+    statsHtml = layout.mode === "dual" ? statsLineDual(usage) : statsLineSingleFor(usage, layout.key);
   } else if (usage.status === "not_logged_in" && config.loginCommand) {
     statsHtml = `<span class="login-link" data-login="${config.loginCommand}">${usage.message ?? "Not logged in"}</span>`;
   } else {
     statsHtml = usage.message ?? "Unavailable";
   }
 
-  const bar = config.dual ? barDual(usage) : barSingle(usage);
+  const bar = layout.mode === "dual" ? barDual(usage) : barSingleFor(usage, layout.key);
   const note = usage?.note ? `<div class="tool-note">${usage.note}</div>` : "";
   const estimateBadge = usage?.source === "local_estimate" ? " (est.)" : "";
 
