@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Usage</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <div id="app" class="card">
+      <div class="drag-handle" data-tauri-drag-region title="Drag to move"></div>
+      <button id="quit-btn" title="Quit AI Usage Widget">&times;</button>
+      <div id="rows" class="rows"></div>
+      <div class="legend">
+        <span class="legend-item" title="Rolling 5-hour window — resets 5 hours after your first request in it"><span class="swatch five-hour"></span>5h window</span>
+        <span class="legend-item" title="Rolling 7-day window"><span class="swatch weekly"></span>weekly</span>
+        <span class="legend-item" title="Calendar billing-cycle usage — resets monthly"><span class="swatch monthly"></span>monthly</span>
+      </div>
+      <div id="updated-at" class="updated-at"></div>
+    </div>
+  </body>
+</html>
