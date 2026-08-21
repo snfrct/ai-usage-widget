@@ -194,7 +194,7 @@ struct TokenRefreshResponse {
 /// cache — this is never written back to Claude Code's own keychain entry
 /// or credentials file, since that store belongs to the CLI, not us.
 async fn refresh_access_token(refresh_token: &str) -> Result<OAuthCreds, String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let params = [
         ("grant_type", "refresh_token"),
         ("refresh_token", refresh_token),
@@ -253,7 +253,7 @@ struct UsageResponse {
 }
 
 async fn fetch_live(token: &str) -> Result<UsageResponse, String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .get("https://api.anthropic.com/api/oauth/usage")
         .header("Authorization", format!("Bearer {token}"))

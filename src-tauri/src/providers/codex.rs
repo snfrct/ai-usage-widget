@@ -85,7 +85,7 @@ struct UsageResponse {
 }
 
 async fn fetch_live(cred: &Credential) -> Result<UsageResponse, String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let mut req = client
         .get("https://chatgpt.com/backend-api/wham/usage")
         .header("Authorization", format!("Bearer {}", cred.access_token))

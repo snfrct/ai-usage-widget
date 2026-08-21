@@ -1,4 +1,5 @@
 mod debug;
+mod http;
 mod models;
 mod providers;
 mod scheduler;

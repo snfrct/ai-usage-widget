@@ -157,7 +157,7 @@ struct OnDemandUsage {
 }
 
 async fn fetch_usage_summary_via_cookie(cookie: &str) -> Result<UsageSummary, String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .get("https://cursor.com/api/usage-summary")
         .header("Cookie", cookie)
@@ -173,7 +173,7 @@ async fn fetch_usage_summary_via_cookie(cookie: &str) -> Result<UsageSummary, St
 /// endpoint for personal API keys, so this may simply not be authorized —
 /// that's fine, it just falls through like any other failed source.
 async fn fetch_usage_summary_via_bearer(token: &str) -> Result<UsageSummary, String> {
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .get("https://cursor.com/api/usage-summary")
         .header("Authorization", format!("Bearer {token}"))
