@@ -6,7 +6,7 @@ A small desktop widget (built with [Tauri v2](https://v2.tauri.app)) that shows,
 
 *(Illustrative sample data, not a live account.)*
 
-It's a borderless, always-visible floating window — no dock icon, no menu-bar icon — that you drag to wherever you want on screen (drag from the thin strip along the top edge) and quit from the small `×` in the corner. It polls every 30 minutes in the background and refreshes once more on launch.
+It's a borderless, always-visible floating window — no dock icon, no menu-bar icon — that you drag to wherever you want on screen (drag from the thin strip along the top edge) and quit from the small `×` in the corner. It polls every 30 minutes in the background and refreshes once more on launch; the `↻` button next to the `×` forces an immediate refresh. If a background refresh fails, the last good numbers stay on screen but the affected row gets an amber `⚠` (hover for the reason) and the footer notes "last refresh failed", rather than silently freezing at some "Updated Xh ago".
 
 ## Tested platforms
 
@@ -58,6 +58,7 @@ Cursor has no short rolling window like Claude/Codex — just a monthly reset, s
 - The only thing persisted to plaintext disk is the last-known-good *usage snapshot* (percentages and reset labels, no tokens) at `<app data dir>/usage-cache.json`, so the widget has something to show instantly on launch before the first live fetch completes.
 - Polling runs every 30 minutes — this is a glance tool, not a real-time dashboard, and these are undocumented endpoints with unpublished rate limits.
 - **Polling resilience**: the background poll loop runs for the entire life of the app, so it's specifically hardened against a single bad cycle taking it down permanently (which would otherwise look like the widget just silently freezing at some "Updated Xh ago" forever, with no crash and no indication anything was wrong). Each cycle runs in its own isolated task rather than inline in the loop, so an unexpected panic in one cycle can't kill all future ones. Every outbound HTTP request has an explicit 15s timeout (`reqwest::Client` has none by default — an unbounded hang from something like waking from sleep with a half-broken network stack could otherwise block a cycle forever), and the whole cycle additionally has a 90s outer timeout as a backstop, which also covers non-HTTP blocking calls (like the synchronous `security` Keychain CLI invocations, which have no timeout of their own).
+- **Sleep/wake**: due-ness is tracked against the wall clock, not a single long `tokio::time::sleep`. A monotonic sleep is *frozen* while macOS is asleep, so a 30-minute timer started before a two-hour lid-close only fires 30 minutes after waking — the widget just sits stale the whole time. The loop instead wakes on a short interval and compares elapsed wall-clock time, so a wake is noticed as "overdue" within a minute and it refreshes on its own; the `↻` button is there for when you don't want to wait even that long.
 
 ## Development
 

@@ -304,16 +304,6 @@ fn start_backoff() {
     crate::debug_log!("[claude] rate limited (429) — backing off until {until}");
 }
 
-fn reset_label(dt: DateTime<Utc>) -> String {
-    let local = dt.with_timezone(&Local);
-    let now = Local::now();
-    if local.date_naive() == now.date_naive() {
-        local.format("%-I:%M%p").to_string().to_lowercase()
-    } else {
-        local.format("%a").to_string()
-    }
-}
-
 fn to_window(resp: &UsageWindowResponse) -> Option<UsageWindow> {
     // `utilization` is already on a 0-100 scale, not a 0-1 fraction —
     // confirmed against Anthropic's own field usage (no further scaling
@@ -327,7 +317,7 @@ fn to_window(resp: &UsageWindowResponse) -> Option<UsageWindow> {
         .map(|d| d.with_timezone(&Utc));
     Some(UsageWindow {
         used_pct: utilization as f32,
-        resets_label: resets_at.map(reset_label).unwrap_or_default(),
+        resets_label: resets_at.map(crate::format::reset_label).unwrap_or_default(),
         resets_at,
     })
 }
@@ -356,6 +346,7 @@ fn usage_from_response(resp: UsageResponse) -> ToolUsage {
         source: DataSource::Live,
         fetched_at: Utc::now(),
         message: None,
+        stale: false,
     }
 }
 

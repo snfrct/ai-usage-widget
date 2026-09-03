@@ -4,12 +4,13 @@
   <!-- card -->
   <rect x="0.5" y="0.5" width="379" height="317" rx="18" fill="#faf9f7" stroke="#eeece8"/>
 
-  <!-- quit control -->
+  <!-- refresh + quit controls -->
+  <text x="332" y="26" font-size="14" fill="#8a8f98" opacity="0.5" text-anchor="end">&#8635;</text>
   <text x="356" y="26" font-size="16" fill="#8a8f98" opacity="0.5" text-anchor="end">&#215;</text>
 
   <!-- Claude Code -->
   <text x="24" y="45" font-size="14" font-weight="600" fill="#1f2328">Claude Code</text>
-  <text x="356" y="45" font-size="11.5" fill="#8a8f98" text-anchor="end">38% &#183; 4:12pm  /  71% &#183; Mon</text>
+  <text x="356" y="45" font-size="11.5" fill="#8a8f98" text-anchor="end">38% &#183; 4:12pm  /  71% &#183; Aug 25</text>
   <rect x="24" y="59" width="163" height="8" rx="4" fill="#e7e5e1"/>
   <rect x="24" y="59" width="62" height="8" rx="4" fill="#3b82f6"/>
   <rect x="193" y="59" width="163" height="8" rx="4" fill="#e7e5e1"/>
@@ -17,7 +18,7 @@
 
   <!-- Codex -->
   <text x="24" y="114" font-size="14" font-weight="600" fill="#1f2328">Codex</text>
-  <text x="356" y="114" font-size="11.5" fill="#8a8f98" text-anchor="end">15% &#183; 6:40pm  /  24% &#183; Sun</text>
+  <text x="356" y="114" font-size="11.5" fill="#8a8f98" text-anchor="end">15% &#183; 6:40pm  /  24% &#183; Aug 24</text>
   <rect x="24" y="128" width="163" height="8" rx="4" fill="#e7e5e1"/>
   <rect x="24" y="128" width="24" height="8" rx="4" fill="#3b82f6"/>
   <rect x="193" y="128" width="163" height="8" rx="4" fill="#e7e5e1"/>
@@ -25,7 +26,7 @@
 
   <!-- Cursor -->
   <text x="24" y="183" font-size="14" font-weight="600" fill="#1f2328">Cursor</text>
-  <text x="356" y="183" font-size="11.5" fill="#8a8f98" text-anchor="end">52% &#183; resets Aug 18</text>
+  <text x="356" y="183" font-size="11.5" fill="#8a8f98" text-anchor="end">52% &#183; resets Sep 1</text>
   <rect x="24" y="197" width="332" height="8" rx="4" fill="#e7e5e1"/>
   <rect x="24" y="197" width="173" height="8" rx="4" fill="#65a30d"/>
 

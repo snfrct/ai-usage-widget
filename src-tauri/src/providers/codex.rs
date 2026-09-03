@@ -108,16 +108,6 @@ async fn fetch_live(cred: &Credential) -> Result<UsageResponse, String> {
     serde_json::from_str::<UsageResponse>(&body).map_err(|e| e.to_string())
 }
 
-fn reset_label(dt: DateTime<Utc>) -> String {
-    let local = dt.with_timezone(&Local);
-    let now = Local::now();
-    if local.date_naive() == now.date_naive() {
-        local.format("%-I:%M%p").to_string().to_lowercase()
-    } else {
-        local.format("%a").to_string()
-    }
-}
-
 fn monthly_reset_label(dt: DateTime<Utc>) -> String {
     dt.with_timezone(&Local).format("%b %-d").to_string()
 }
@@ -128,7 +118,7 @@ fn to_window(resp: &WindowSnapshot, kind: WindowKind) -> Option<UsageWindow> {
     let resets_label = resets_at
         .map(|dt| match kind {
             WindowKind::Monthly => monthly_reset_label(dt),
-            WindowKind::FiveHour | WindowKind::Weekly => reset_label(dt),
+            WindowKind::FiveHour | WindowKind::Weekly => crate::format::reset_label(dt),
         })
         .unwrap_or_default();
     Some(UsageWindow {
@@ -207,6 +197,7 @@ pub async fn refresh() -> ToolUsage {
                 source: DataSource::Live,
                 fetched_at: Utc::now(),
                 message: None,
+                stale: false,
             }
         }
         Err(e) if e == "unauthorized" => {

@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -11,7 +11,13 @@ use crate::store::Store;
 /// and Codex's usage endpoints are undocumented and rate-limited in ways
 /// that aren't publicly specified; a slower cadence means fewer chances to
 /// trip them in the first place.
-const POLL_INTERVAL_SECS: u64 = 30 * 60;
+const POLL_INTERVAL: Duration = Duration::from_secs(30 * 60);
+
+/// How often the loop wakes to check whether a poll is due. Short so the
+/// widget recovers within a minute of the machine waking from sleep, rather
+/// than waiting out the remainder of a 30-minute timer that was frozen the
+/// whole time the lid was closed (see `start`).
+const TICK: Duration = Duration::from_secs(60);
 
 /// Generous upper bound on a whole cycle (all three providers, including
 /// Claude's worst case of up to four sequential HTTP calls at 15s each).
@@ -35,23 +41,43 @@ pub async fn refresh_all(app: &AppHandle) -> AllUsage {
     snapshot
 }
 
-/// Sleeps before the first fetch rather than firing immediately: the
-/// frontend already triggers one fetch on load (`refresh_now`), and undoing
-/// that redundancy matters here specifically because Claude's usage endpoint
-/// is aggressively rate-limited — two near-simultaneous calls to it on every
-/// launch was enough to trip a 429.
+/// Waits out a full interval before the first fetch rather than firing
+/// immediately: the frontend already triggers one fetch on load
+/// (`refresh_now`), and undoing that redundancy matters here specifically
+/// because Claude's usage endpoint is aggressively rate-limited — two
+/// near-simultaneous calls to it on every launch was enough to trip a 429.
 ///
-/// Each poll cycle runs in its own spawned task rather than inline in this
-/// loop. That's not just style: this loop runs for the entire lifetime of
-/// the app, so if a single cycle ever panicked — anywhere, for any reason,
-/// including a bug we haven't hit yet — an inline call would take the whole
-/// loop down with it, permanently, with nothing visibly wrong (the rest of
-/// the UI keeps running, it just silently stops refreshing forever).
-/// Spawning isolates a panic to that one cycle; we log it and keep polling.
+/// Due-ness is tracked against the wall clock (`SystemTime`), not a single
+/// long `tokio::time::sleep`. A monotonic sleep is *frozen* while macOS is
+/// asleep, so a 30-minute sleep begun before a two-hour lid-close only fires
+/// 30 minutes after waking — the widget just sits at "Updated Xh ago" the
+/// whole time with nothing visibly wrong. Waking on a short `TICK` and
+/// comparing wall-clock elapsed means a wake is noticed as "we're overdue"
+/// within one tick, and the widget refreshes on its own.
+///
+/// Each poll cycle still runs in its own spawned task rather than inline in
+/// this loop. That's not just style: this loop runs for the entire lifetime
+/// of the app, so if a single cycle ever panicked — anywhere, for any
+/// reason, including a bug we haven't hit yet — an inline call would take
+/// the whole loop down with it, permanently, with nothing visibly wrong
+/// (the rest of the UI keeps running, it just silently stops refreshing
+/// forever). Spawning isolates a panic to that one cycle; we log it and
+/// keep polling.
 pub fn start(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
+        let mut last_poll = SystemTime::now();
         loop {
-            tokio::time::sleep(Duration::from_secs(POLL_INTERVAL_SECS)).await;
+            tokio::time::sleep(TICK).await;
+
+            let overdue = SystemTime::now()
+                .duration_since(last_poll)
+                .map(|elapsed| elapsed >= POLL_INTERVAL)
+                .unwrap_or(true); // clock moved backwards — just poll
+            if !overdue {
+                continue;
+            }
+            last_poll = SystemTime::now();
+
             let app_for_cycle = app.clone();
             let handle = tauri::async_runtime::spawn(async move {
                 refresh_all(&app_for_cycle).await;

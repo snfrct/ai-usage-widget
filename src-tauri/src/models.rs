@@ -40,6 +40,12 @@ pub struct ToolUsage {
     pub source: DataSource,
     pub fetched_at: DateTime<Utc>,
     pub message: Option<String>,
+    /// True when these numbers are the last good ones we had but the most
+    /// recent refresh failed — `fetched_at` still reflects when the numbers
+    /// are from, and `message` carries why the refresh failed. Lets the UI
+    /// keep showing something useful without pretending it's current.
+    #[serde(default)]
+    pub stale: bool,
 }
 
 impl ToolUsage {
@@ -54,6 +60,7 @@ impl ToolUsage {
             source: DataSource::None,
             fetched_at: Utc::now(),
             message: Some(message.into()),
+            stale: false,
         }
     }
 
@@ -68,6 +75,7 @@ impl ToolUsage {
             source: DataSource::None,
             fetched_at: Utc::now(),
             message: Some(message.into()),
+            stale: false,
         }
     }
 
@@ -82,6 +90,7 @@ impl ToolUsage {
             source: DataSource::None,
             fetched_at: Utc::now(),
             message: Some(message.into()),
+            stale: false,
         }
     }
 }

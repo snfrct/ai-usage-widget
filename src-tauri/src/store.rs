@@ -50,6 +50,11 @@ impl Store {
     /// last live numbers rather than flashing an error on every network
     /// hiccup. Deliberate states (`NotLoggedIn`/`AuthExpired`/`Ok`) always
     /// replace, since those reflect the real current credential state.
+    ///
+    /// When it does keep the previous numbers, it still marks them `stale`
+    /// and carries the failure reason across, so the UI can show that the
+    /// last refresh didn't land instead of silently freezing at some
+    /// "Updated Xh ago". A later successful `Ok` clears both.
     pub fn update(&self, tool: &str, usage: crate::models::ToolUsage) {
         {
             let mut all = self.cached.lock().unwrap();
@@ -63,7 +68,12 @@ impl Store {
                 && slot
                     .as_ref()
                     .is_some_and(|prev| prev.status == crate::models::ToolStatus::Ok);
-            if !keep_previous {
+            if keep_previous {
+                if let Some(prev) = slot.as_mut() {
+                    prev.stale = true;
+                    prev.message = usage.message;
+                }
+            } else {
                 *slot = Some(usage);
             }
         }

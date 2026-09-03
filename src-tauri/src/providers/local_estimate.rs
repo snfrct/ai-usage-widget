@@ -116,5 +116,6 @@ pub fn claude_estimate() -> Option<ToolUsage> {
         source: DataSource::LocalEstimate,
         fetched_at: now,
         message: None,
+        stale: false,
     })
 }

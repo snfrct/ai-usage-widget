@@ -250,6 +250,7 @@ fn build_usage(summary: UsageSummary) -> ToolUsage {
         source: DataSource::Live,
         fetched_at: Utc::now(),
         message: None,
+        stale: false,
     }
 }
 

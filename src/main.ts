@@ -20,6 +20,7 @@ interface ToolUsage {
   source: DataSource;
   fetched_at: string;
   message: string | null;
+  stale: boolean;
 }
 
 interface AllUsage {
@@ -42,9 +43,18 @@ const TOOLS: ToolConfig[] = [
 ];
 
 const rowsEl = document.querySelector<HTMLDivElement>("#rows")!;
+const refreshBtn = document.querySelector<HTMLButtonElement>("#refresh-btn")!;
 
 function pct(n: number): string {
   return `${Math.max(0, Math.min(100, Math.round(n)))}%`;
+}
+
+function esc(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function statsLineDual(usage: ToolUsage): string {
@@ -132,7 +142,13 @@ function renderRow(config: ToolConfig, usage: ToolUsage | null): string {
   if (!usage) {
     statsHtml = "loading…";
   } else if (usage.status === "ok") {
-    statsHtml = layout.mode === "dual" ? statsLineDual(usage) : statsLineSingleFor(usage, layout.key);
+    const line =
+      layout.mode === "dual" ? statsLineDual(usage) : statsLineSingleFor(usage, layout.key);
+    statsHtml = usage.stale
+      ? `<span class="stale-warn" title="${esc(
+          usage.message ?? "Last refresh failed — showing the last good numbers",
+        )}">⚠</span>${line}`
+      : line;
   } else if (usage.status === "not_logged_in" && config.loginCommand) {
     statsHtml = `<span class="login-link" data-login="${config.loginCommand}">${usage.message ?? "Not logged in"}</span>`;
   } else {
@@ -156,6 +172,7 @@ function renderRow(config: ToolConfig, usage: ToolUsage | null): string {
 
 const updatedAtEl = document.querySelector<HTMLDivElement>("#updated-at")!;
 let lastUsage: AllUsage | null = null;
+let refreshing = false;
 
 function formatRelativeTime(iso: string): string {
   const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
@@ -173,7 +190,9 @@ function renderUpdatedAt(usage: AllUsage) {
     return;
   }
   const latest = timestamps.reduce((a, b) => (new Date(a) > new Date(b) ? a : b));
-  updatedAtEl.textContent = `Updated ${formatRelativeTime(latest)}`;
+  const anyStale = TOOLS.some((c) => usage[c.key]?.stale);
+  updatedAtEl.textContent =
+    `Updated ${formatRelativeTime(latest)}` + (anyStale ? " · last refresh failed" : "");
 }
 
 function render(usage: AllUsage) {
@@ -190,10 +209,31 @@ function render(usage: AllUsage) {
   renderUpdatedAt(usage);
 }
 
+/// Forces an immediate refresh, spinning the button while it runs. Any
+/// failure to even reach the backend is surfaced in place of the timestamp
+/// rather than swallowed — a per-tool failure still comes back inside the
+/// snapshot and shows as a stale ⚠ on that row.
+async function doRefresh() {
+  if (refreshing) return;
+  refreshing = true;
+  refreshBtn.classList.add("is-refreshing");
+  refreshBtn.disabled = true;
+  try {
+    render(await invoke<AllUsage>("refresh_now"));
+  } catch (err) {
+    updatedAtEl.textContent = `Refresh failed — ${String(err)}`;
+  } finally {
+    refreshing = false;
+    refreshBtn.classList.remove("is-refreshing");
+    refreshBtn.disabled = false;
+  }
+}
+
 async function bootstrap() {
   document.querySelector("#quit-btn")?.addEventListener("click", () => {
     void invoke("quit_app");
   });
+  refreshBtn.addEventListener("click", () => void doRefresh());
 
   const cached = await invoke<AllUsage>("get_usage");
   render(cached);
@@ -202,7 +242,7 @@ async function bootstrap() {
     render(event.payload);
   });
 
-  void invoke<AllUsage>("refresh_now").then(render);
+  void doRefresh();
 
   // Keeps the "X ago" text live between actual data refreshes.
   setInterval(() => {
